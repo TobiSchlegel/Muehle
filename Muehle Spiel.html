@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mühle</title>
+<style>
+:root{--bg:#16232a;--panel:#1f323b;--ink:#eef1ee;--mute:#9fb3ba;--wood:#3a281d;--brass:#c9a24a;--ok:#6fd08c;--bad:#ff6b5e}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Iowan Old Style",Georgia,serif}
+main{max-width:640px;margin:0 auto;padding:16px 14px 28px}
+h1{font-size:2rem;margin:4px 0 12px;letter-spacing:.02em}
+.levels{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+button{font:inherit;color:var(--ink);background:var(--panel);border:1px solid #38505b;border-radius:8px;padding:9px 14px;cursor:pointer}
+button:hover{border-color:var(--brass)}
+button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+button.on{background:var(--brass);color:#1d1409;border-color:var(--brass);font-weight:700}
+#status{min-height:3.2em;background:var(--panel);border-radius:8px;padding:10px 12px;margin-bottom:12px;line-height:1.4}
+#status.win{outline:2px solid var(--ok)}#status.lose{outline:2px solid var(--bad)}
+svg{display:block;width:100%;height:auto;border-radius:14px;background:var(--wood);touch-action:manipulation}
+.stats{display:flex;justify-content:space-between;gap:10px;margin:12px 0;color:var(--mute);font-size:.95rem}
+.stats b{color:var(--ink)}
+.rules{color:var(--mute);font-size:.9rem;line-height:1.5}
+.pt{cursor:pointer}
+</style>
+</head>
+<body>
+<main>
+<h1>Mühle</h1>
+<div class="levels" id="levels"></div>
+<div id="status"></div>
+<svg id="g" viewBox="0 0 700 700" role="img" aria-label="Mühle-Spielbrett"></svg>
+<div class="stats"><div>Du (hell): <b id="s1"></b></div><div>CPU (dunkel): <b id="s2"></b></div></div>
+<button id="again">Neues Spiel</button>
+<p class="rules">Setze zuerst je 9 Steine, danach ziehst du auf Nachbarpunkte. Mit nur noch 3 Steinen darfst du springen. Drei in einer Reihe sind eine Mühle: Du entfernst einen gegnerischen Stein, der nicht in einer Mühle steht. Verloren hat, wer nur noch 2 Steine hat oder nicht ziehen kann.</p>
+</main>
+<script>
+const PTS=[[0,0],[3,0],[6,0],[1,1],[3,1],[5,1],[2,2],[3,2],[4,2],[0,3],[1,3],[2,3],[4,3],[5,3],[6,3],[2,4],[3,4],[4,4],[1,5],[3,5],[5,5],[0,6],[3,6],[6,6]];
+const MILLS=[[0,1,2],[2,14,23],[21,22,23],[0,9,21],[3,4,5],[5,13,20],[18,19,20],[3,10,18],[6,7,8],[8,12,17],[15,16,17],[6,11,15],[1,4,7],[9,10,11],[12,13,14],[16,19,22]];
+const ADJ=Array.from({length:24},()=>[]);
+MILLS.forEach(m=>[[m[0],m[1]],[m[1],m[2]]].forEach(([a,b])=>{ADJ[a].push(b);ADJ[b].push(a)}));
+const MAT=Array.from({length:24},()=>[]);
+MILLS.forEach(m=>m.forEach(i=>MAT[i].push(m)));
+const inMill=(b,i,p)=>MAT[i].some(m=>m.every(j=>b[j]===p));
+const pick=a=>a[Math.floor(Math.random()*a.length)];
+
+function genMoves(s,p){
+  const o=3-p,b=s.b,res=[],base=[];
+  if(s.h[p]>0){for(let i=0;i<24;i++)if(!b[i])base.push([-1,i])}
+  else{
+    const fly=s.c[p]===3;
+    for(let i=0;i<24;i++)if(b[i]===p){
+      if(fly){for(let j=0;j<24;j++)if(!b[j])base.push([i,j])}
+      else for(const j of ADJ[i])if(!b[j])base.push([i,j]);
+    }
+  }
+  for(const [f,t] of base){
+    b[t]=p;if(f>=0)b[f]=0;
+    if(inMill(b,t,p)){
+      const free=[],all=[];
+      for(let i=0;i<24;i++)if(b[i]===o){all.push(i);if(!inMill(b,i,o))free.push(i)}
+      for(const r of(free.length?free:all))res.push({f,t,r});
+    }else res.push({f,t,r:-1});
+    b[t]=0;if(f>=0)b[f]=p;
+  }
+  return res;
+}
+function apply(s,m,p){
+  const n={b:s.b.slice(),h:s.h.slice(),c:s.c.slice(),t:3-p};
+  if(m.f<0){n.h[p]--;n.c[p]++}else n.b[m.f]=0;
+  n.b[m.t]=p;
+  if(m.r>=0){n.b[m.r]=0;n.c[3-p]--}
+  return n;
+}
+function evaluate(s){
+  const b=s.b;
+  let sc=100*((s.h[2]+s.c[2])-(s.h[1]+s.c[1]));
+  for(const m of MILLS){
+    let a=0,c=0,e=0;
+    for(const i of m){if(b[i]===2)a++;else if(b[i]===1)c++;else e++}
+    if(a===3)sc+=12;else if(c===3)sc-=12;
+    else if(a===2&&e===1)sc+=8;else if(c===2&&e===1)sc-=8;
+  }
+  let m2=0,m1=0;
+  for(let i=0;i<24;i++)if(b[i]){let k=0;for(const j of ADJ[i])if(!b[j])k++;if(b[i]===2)m2+=k;else m1+=k}
+  return sc+3*(m2-m1);
+}
+function search(s,d,a,bt){
+  const p=s.t;
+  if(s.h[p]+s.c[p]<3)return p===2?-10000-d:10000+d;
+  const mv=genMoves(s,p);
+  if(!mv.length)return p===2?-10000-d:10000+d;
+  if(d===0)return evaluate(s);
+  mv.sort((x,y)=>(y.r>=0)-(x.r>=0));
+  if(p===2){
+    let best=-Infinity;
+    for(const m of mv){const v=search(apply(s,m,p),d-1,a,bt);if(v>best)best=v;if(best>a)a=best;if(a>=bt)break}
+    return best;
+  }
+  let best=Infinity;
+  for(const m of mv){const v=search(apply(s,m,p),d-1,a,bt);if(v<best)best=v;if(best<bt)bt=best;if(a>=bt)break}
+  return best;
+}
+function cpuMove(s){
+  const mv=genMoves(s,2);
+  if(level===0){
+    const mills=mv.filter(m=>m.r>=0);
+    return(mills.length&&Math.random()<.5)?pick(mills):pick(mv);
+  }
+  const depth=level===1?2:4;
+  let best=-Infinity,bl=[];
+  for(const m of mv){
+    const v=search(apply(s,m,2),depth-1,best-1,Infinity);
+    if(v>best){best=v;bl=[m]}else if(v===best)bl.push(m);
+  }
+  return pick(bl);
+}
+
+const NAMES=['Leicht','Mittel','Schwer'];
+let level=1,s,mode,sel,targets,removable,pending,over,busy,last,msg;
+
+function newGame(){
+  s={b:Array(24).fill(0),h:[0,9,9],c:[0,0,0],t:1};
+  mode='idle';sel=-1;targets=[];removable=[];pending=[];over=false;busy=false;last=[];
+  msg='Du beginnst. Setze einen Stein.';
+  render();
+}
+function phaseText(){
+  if(s.h[1]>0)return'Setze einen Stein ('+s.h[1]+' noch zu setzen).';
+  return s.c[1]===3?'Du darfst springen: wähle einen Stein und ein beliebiges freies Feld.':'Wähle einen Stein und ziehe auf ein freies Nachbarfeld.';
+}
+function click(i){
+  if(over||busy||s.t!==1)return;
+  const mv=genMoves(s,1);
+  if(mode==='remove'){
+    const m=pending.find(x=>x.r===i);
+    if(m)commit(m);
+    return;
+  }
+  if(s.h[1]>0){
+    const c=mv.filter(m=>m.t===i);
+    if(c.length)choose(c);
+    return;
+  }
+  if(s.b[i]===1){
+    if(sel===i){sel=-1;targets=[]}
+    else{sel=i;targets=mv.filter(m=>m.f===i).map(m=>m.t).filter((t,k,a)=>a.indexOf(t)===k)}
+    msg=phaseText();render();return;
+  }
+  if(sel>=0&&targets.includes(i))choose(mv.filter(m=>m.f===sel&&m.t===i));
+}
+function choose(c){
+  if(c[0].r<0){commit(c[0]);return}
+  mode='remove';pending=c;removable=c.map(m=>m.r);targets=[];
+  msg='Mühle! Tippe auf einen dunklen Stein, um ihn zu entfernen.';
+  render();
+}
+function commit(m){
+  last=[m.t];
+  s=apply(s,m,1);mode='idle';sel=-1;targets=[];removable=[];pending=[];
+  msg=m.r>=0?'Du hast einen Stein entfernt.':'';
+  if(finish())return;
+  busy=true;msg+=(msg?' ':'')+'CPU denkt nach …';render();
+  setTimeout(cpuTurn,350);
+}
+function cpuTurn(){
+  const m=cpuMove(s);
+  s=apply(s,m,2);last=[m.t];busy=false;
+  msg=(m.r>=0?'Die CPU hat eine Mühle gebildet und einen deiner Steine entfernt. ':'')+phaseText();
+  if(finish())return;
+  render();
+}
+function finish(){
+  const t=s.t;
+  let why='';
+  if(s.h[t]+s.c[t]<3)why='nur noch 2 Steine';
+  else if(!genMoves(s,t).length)why='keine Zugmöglichkeit mehr';
+  if(!why)return false;
+  over=true;busy=false;
+  msg=t===2?'Gewonnen! Die CPU hat '+why+'.':'Verloren. Du hast '+why+'.';
+  render(t===2?'win':'lose');
+  return true;
+}
+function render(cls){
+  let h='';
+  for(const m of MILLS){
+    const a=PTS[m[0]],c=PTS[m[2]];
+    h+=`<line x1="${a[0]*100+50}" y1="${a[1]*100+50}" x2="${c[0]*100+50}" y2="${c[1]*100+50}" stroke="#c9a24a" stroke-width="5" stroke-linecap="round"/>`;
+  }
+  h+=`<defs><radialGradient id="w" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#cfc8b8"/></radialGradient><radialGradient id="k" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#4a4d57"/><stop offset="1" stop-color="#121216"/></radialGradient></defs>`;
+  for(let i=0;i<24;i++){
+    const x=PTS[i][0]*100+50,y=PTS[i][1]*100+50,v=s.b[i];
+    h+=`<circle cx="${x}" cy="${y}" r="8" fill="#c9a24a"/>`;
+    if(targets.includes(i))h+=`<circle cx="${x}" cy="${y}" r="24" fill="rgba(111,208,140,.35)" stroke="#6fd08c" stroke-width="4"/>`;
+    if(s.h[1]>0&&s.t===1&&mode==='idle'&&!v&&!busy&&!over)h+=`<circle cx="${x}" cy="${y}" r="13" fill="rgba(111,208,140,.28)"/>`;
+    if(v){
+      h+=`<circle cx="${x}" cy="${y}" r="32" fill="url(#${v===1?'w':'k'})" stroke="${last.includes(i)?'#c9a24a':'rgba(0,0,0,.5)'}" stroke-width="${last.includes(i)?5:2}"/>`;
+      if(sel===i)h+=`<circle cx="${x}" cy="${y}" r="40" fill="none" stroke="#c9a24a" stroke-width="5"/>`;
+      if(removable.includes(i))h+=`<circle cx="${x}" cy="${y}" r="40" fill="none" stroke="#ff6b5e" stroke-width="5" stroke-dasharray="8 6"/>`;
+    }
+    h+=`<circle class="pt" cx="${x}" cy="${y}" r="38" fill="transparent" onclick="click_(${i})"/>`;
+  }
+  document.getElementById('g').innerHTML=h;
+  const st=document.getElementById('status');
+  st.textContent=msg||phaseText();st.className=cls||'';
+  document.getElementById('s1').textContent=s.c[1]+' auf dem Brett, '+s.h[1]+' zu setzen';
+  document.getElementById('s2').textContent=s.c[2]+' auf dem Brett, '+s.h[2]+' zu setzen';
+  document.querySelectorAll('#levels button').forEach((b,k)=>b.classList.toggle('on',k===level));
+}
+window.click_=click;
+const lv=document.getElementById('levels');
+NAMES.forEach((n,k)=>{const b=document.createElement('button');b.textContent=n;b.onclick=()=>{level=k;newGame()};lv.appendChild(b)});
+document.getElementById('again').onclick=newGame;
+newGame();
+</script>
+</body>
+</html>
